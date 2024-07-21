@@ -132,12 +132,12 @@ class PhilipsGenericFan(PhilipsEntity, FanEntity):
             sw_version=self._device_status["WifiVersion"],
             serial_number=self._device_status[PhilipsApi.DEVICE_ID],
             identifiers={(DOMAIN, self._device_status[PhilipsApi.DEVICE_ID])},
-        )
-
-        if self.config_entry_data.device_information.mac is not None:
-            self._attr_device_info.connections = {
+            connections={
                 (CONNECTION_NETWORK_MAC, self.config_entry_data.device_information.mac)
             }
+            if self.config_entry_data.device_information.mac is not None
+            else None,
+        )
 
 
 class PhilipsGenericCoAPFanBase(PhilipsGenericFan):
