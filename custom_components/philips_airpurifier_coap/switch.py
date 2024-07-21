@@ -1,4 +1,5 @@
 """Philips Air Purifier & Humidifier Switches."""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -7,28 +8,14 @@ from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import (
-    ATTR_DEVICE_CLASS,
-    ATTR_ICON,
-    CONF_ENTITY_CATEGORY,
-    CONF_HOST,
-    CONF_NAME,
-)
+from homeassistant.const import ATTR_DEVICE_CLASS, ATTR_ICON, CONF_ENTITY_CATEGORY
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import PlatformNotReady
 from homeassistant.helpers.entity import Entity
 
-from .const import (
-    CONF_MODEL,
-    DATA_KEY_COORDINATOR,
-    DOMAIN,
-    SWITCH_OFF,
-    SWITCH_ON,
-    SWITCH_TYPES,
-    FanAttributes,
-    PhilipsApi,
-)
-from .philips import Coordinator, PhilipsEntity, model_to_class
+from .const import SWITCH_OFF, SWITCH_ON, SWITCH_TYPES, FanAttributes, PhilipsApi
+from .coordinator import Coordinator
+from .philips import PhilipsEntity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,33 +28,33 @@ async def async_setup_entry(
     """Set up platform for switch."""
     _LOGGER.debug("async_setup_entry called for platform switch")
 
-    host = entry.data[CONF_HOST]
-    model = entry.data[CONF_MODEL]
-    name = entry.data[CONF_NAME]
+    # host = entry.data[CONF_HOST]
+    # model = entry.data[CONF_MODEL]
+    # name = entry.data[CONF_NAME]
 
-    data = hass.data[DOMAIN][host]
+    # data = hass.data[DOMAIN][host]
 
-    coordinator = data[DATA_KEY_COORDINATOR]
+    # coordinator = data[DATA_KEY_COORDINATOR]
 
-    model_class = model_to_class.get(model)
-    if model_class:
-        available_switches = []
+    # model_class = model_to_class.get(model)
+    # if model_class:
+    #     available_switches = []
 
-        for cls in reversed(model_class.__mro__):
-            cls_available_switches = getattr(cls, "AVAILABLE_SWITCHES", [])
-            available_switches.extend(cls_available_switches)
+    #     for cls in reversed(model_class.__mro__):
+    #         cls_available_switches = getattr(cls, "AVAILABLE_SWITCHES", [])
+    #         available_switches.extend(cls_available_switches)
 
-        switches = []
+    #     switches = []
 
-        for switch in SWITCH_TYPES:
-            if switch in available_switches:
-                switches.append(PhilipsSwitch(coordinator, name, model, switch))
+    #     for switch in SWITCH_TYPES:
+    #         if switch in available_switches:
+    #             switches.append(PhilipsSwitch(coordinator, name, model, switch))
 
-        async_add_entities(switches, update_before_add=False)
+    #     async_add_entities(switches, update_before_add=False)
 
-    else:
-        _LOGGER.error("Unsupported model: %s", model)
-        return
+    # else:
+    #     _LOGGER.error("Unsupported model: %s", model)
+    #     return
 
 
 class PhilipsSwitch(PhilipsEntity, SwitchEntity):

@@ -1,9 +1,10 @@
 """Philips Air Purifier & Humidifier Sensors."""
+
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from datetime import timedelta
-import logging
 from typing import Any, cast
 
 from homeassistant.components.sensor import ATTR_STATE_CLASS, SensorEntity
@@ -11,8 +12,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     ATTR_DEVICE_CLASS,
     CONF_ENTITY_CATEGORY,
-    CONF_HOST,
-    CONF_NAME,
     PERCENTAGE,
     UnitOfTime,
 )
@@ -22,16 +21,14 @@ from homeassistant.helpers.entity import Entity, EntityCategory
 from homeassistant.helpers.typing import StateType
 
 from .const import (
-    CONF_MODEL,
-    DATA_KEY_COORDINATOR,
-    DOMAIN,
     EXTRA_SENSOR_TYPES,
     FILTER_TYPES,
     SENSOR_TYPES,
     FanAttributes,
     PhilipsApi,
 )
-from .philips import Coordinator, PhilipsEntity, model_to_class
+from .coordinator import Coordinator
+from .philips import PhilipsEntity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,44 +40,44 @@ async def async_setup_entry(  # noqa: D103
 ) -> None:
     _LOGGER.debug("async_setup_entry called for platform sensor")
 
-    host = entry.data[CONF_HOST]
-    model = entry.data[CONF_MODEL]
-    name = entry.data[CONF_NAME]
+    # host = entry.data[CONF_HOST]
+    # model = entry.data[CONF_MODEL]
+    # name = entry.data[CONF_NAME]
 
-    data = hass.data[DOMAIN][host]
+    # data = hass.data[DOMAIN][host]
 
-    coordinator = data[DATA_KEY_COORDINATOR]
-    status = coordinator.status
+    # coordinator = data[DATA_KEY_COORDINATOR]
+    # status = coordinator.status
 
-    model_class = model_to_class.get(model)
-    unavailable_filters = []
-    unavailable_sensors = []
-    extra_sensors = []
+    # model_class = model_to_class.get(model)
+    # unavailable_filters = []
+    # unavailable_sensors = []
+    # extra_sensors = []
 
-    if model_class:
-        for cls in reversed(model_class.__mro__):
-            cls_unavailable_filters = getattr(cls, "UNAVAILABLE_FILTERS", [])
-            unavailable_filters.extend(cls_unavailable_filters)
-            cls_unavailable_sensors = getattr(cls, "UNAVAILABLE_SENSORS", [])
-            unavailable_sensors.extend(cls_unavailable_sensors)
-            cls_extra_sensors = getattr(cls, "EXTRA_SENSORS", [])
-            extra_sensors.extend(cls_extra_sensors)
+    # if model_class:
+    #     for cls in reversed(model_class.__mro__):
+    #         cls_unavailable_filters = getattr(cls, "UNAVAILABLE_FILTERS", [])
+    #         unavailable_filters.extend(cls_unavailable_filters)
+    #         cls_unavailable_sensors = getattr(cls, "UNAVAILABLE_SENSORS", [])
+    #         unavailable_sensors.extend(cls_unavailable_sensors)
+    #         cls_extra_sensors = getattr(cls, "EXTRA_SENSORS", [])
+    #         extra_sensors.extend(cls_extra_sensors)
 
-    sensors = []
+    # sensors = []
 
-    for sensor in SENSOR_TYPES:
-        if sensor in status and sensor not in unavailable_sensors:
-            sensors.append(PhilipsSensor(coordinator, name, model, sensor))
+    # for sensor in SENSOR_TYPES:
+    #     if sensor in status and sensor not in unavailable_sensors:
+    #         sensors.append(PhilipsSensor(coordinator, name, model, sensor))
 
-    for sensor in EXTRA_SENSOR_TYPES:
-        if sensor in status and sensor in extra_sensors:
-            sensors.append(PhilipsSensor(coordinator, name, model, sensor))
+    # for sensor in EXTRA_SENSOR_TYPES:
+    #     if sensor in status and sensor in extra_sensors:
+    #         sensors.append(PhilipsSensor(coordinator, name, model, sensor))
 
-    for _filter in FILTER_TYPES:
-        if _filter in status and _filter not in unavailable_filters:
-            sensors.append(PhilipsFilterSensor(coordinator, name, model, _filter))
+    # for _filter in FILTER_TYPES:
+    #     if _filter in status and _filter not in unavailable_filters:
+    #         sensors.append(PhilipsFilterSensor(coordinator, name, model, _filter))
 
-    async_add_entities(sensors, update_before_add=False)
+    # async_add_entities(sensors, update_before_add=False)
 
 
 class PhilipsSensor(PhilipsEntity, SensorEntity):

@@ -1,4 +1,5 @@
 """Philips Air Purifier & Humidifier Switches."""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -7,29 +8,21 @@ from typing import Any
 
 from homeassistant.components.light import ATTR_BRIGHTNESS, ColorMode, LightEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import (
-    ATTR_DEVICE_CLASS,
-    ATTR_ICON,
-    CONF_ENTITY_CATEGORY,
-    CONF_HOST,
-    CONF_NAME,
-)
+from homeassistant.const import ATTR_DEVICE_CLASS, ATTR_ICON, CONF_ENTITY_CATEGORY
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import PlatformNotReady
 from homeassistant.helpers.entity import Entity
 
 from .const import (
-    CONF_MODEL,
-    DATA_KEY_COORDINATOR,
     DIMMABLE,
-    DOMAIN,
     LIGHT_TYPES,
     SWITCH_OFF,
     SWITCH_ON,
     FanAttributes,
     PhilipsApi,
 )
-from .philips import Coordinator, PhilipsEntity, model_to_class
+from .coordinator import Coordinator
+from .philips import PhilipsEntity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,33 +35,33 @@ async def async_setup_entry(
     """Set up the light platform."""
     _LOGGER.debug("async_setup_entry called for platform light")
 
-    host = entry.data[CONF_HOST]
-    model = entry.data[CONF_MODEL]
-    name = entry.data[CONF_NAME]
+    # host = entry.data[CONF_HOST]
+    # model = entry.data[CONF_MODEL]
+    # name = entry.data[CONF_NAME]
 
-    data = hass.data[DOMAIN][host]
+    # data = hass.data[DOMAIN][host]
 
-    coordinator = data[DATA_KEY_COORDINATOR]
+    # coordinator = data[DATA_KEY_COORDINATOR]
 
-    model_class = model_to_class.get(model)
-    if model_class:
-        available_lights = []
+    # model_class = model_to_class.get(model)
+    # if model_class:
+    #     available_lights = []
 
-        for cls in reversed(model_class.__mro__):
-            cls_available_lights = getattr(cls, "AVAILABLE_LIGHTS", [])
-            available_lights.extend(cls_available_lights)
+    #     for cls in reversed(model_class.__mro__):
+    #         cls_available_lights = getattr(cls, "AVAILABLE_LIGHTS", [])
+    #         available_lights.extend(cls_available_lights)
 
-        lights = []
+    #     lights = []
 
-        for light in LIGHT_TYPES:
-            if light in available_lights:
-                lights.append(PhilipsLight(coordinator, name, model, light))
+    #     for light in LIGHT_TYPES:
+    #         if light in available_lights:
+    #             lights.append(PhilipsLight(coordinator, name, model, light))
 
-        async_add_entities(lights, update_before_add=False)
+    #     async_add_entities(lights, update_before_add=False)
 
-    else:
-        _LOGGER.error("Unsupported model: %s", model)
-        return
+    # else:
+    #     _LOGGER.error("Unsupported model: %s", model)
+    #     return
 
 
 class PhilipsLight(PhilipsEntity, LightEntity):

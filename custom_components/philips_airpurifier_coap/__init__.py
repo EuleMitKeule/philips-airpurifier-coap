@@ -1,4 +1,5 @@
 """Support for Philips AirPurifier with CoAP."""
+
 from __future__ import annotations
 
 import asyncio
@@ -9,38 +10,35 @@ import logging
 from os import path, walk
 
 from aioairctrl import CoAPClient
+from custom_components.philips_airpurifier_coap.config_entry_data import ConfigEntryData
+from custom_components.philips_airpurifier_coap.model import DeviceInformation
 from getmac import get_mac_address
 
 from homeassistant.components.frontend import add_extra_js_url
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.components.http.view import HomeAssistantView
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_HOST
+from homeassistant.const import CONF_HOST, CONF_NAME
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.device_registry import format_mac
 
 from .const import (
-    DATA_KEY_CLIENT,
-    DATA_KEY_COORDINATOR,
+    CONF_DEVICE_ID,
+    CONF_MODEL,
+    CONF_STATUS,
     DOMAIN,
     ICONLIST_URL,
     ICONS,
     ICONS_PATH,
-    ICONS_URL,
     LOADER_PATH,
     LOADER_URL,
     PAP,
 )
-from .philips import Coordinator
+from .coordinator import Coordinator
 
 _LOGGER = logging.getLogger(__name__)
-
-
 PLATFORMS = ["fan", "binary_sensor", "sensor", "switch", "light", "select", "number"]
-
-
-# icons code thanks to Thomas Loven:
-# https://github.com/thomasloven/hass-fontawesome/blob/master/custom_components/fontawesome/__init__.py
 
 
 class ListingView(HomeAssistantView):
@@ -86,7 +84,15 @@ async def async_setup(hass: HomeAssistant, config) -> bool:
     hass.data[DOMAIN][ICONS] = icons
 
     # register path and view
-    hass.http.register_static_path(ICONS_URL + "/" + iset, iconpath, True)
+    await hass.http.async_register_static_paths(
+        [
+            StaticPathConfig(
+                "/philips_airpurifier_coap/icons/pap",
+                "/workspaces/core/config/custom_components/philips_airpurifier_coap/icons/pap",
+                True,
+            )
+        ]
+    )
     hass.http.register_view(ListingView(hass, ICONLIST_URL + "/" + iset))
 
     return True
@@ -123,38 +129,36 @@ async def async_get_mac_address_from_host(hass: HomeAssistant, host: str) -> str
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up the Philips AirPurifier integration."""
+
     host = entry.data[CONF_HOST]
+    model = entry.data[CONF_MODEL]
+    name = entry.data[CONF_NAME]
+    device_id = entry.data[CONF_DEVICE_ID]
+    status = entry.data[CONF_STATUS]
     mac = await async_get_mac_address_from_host(hass, host)
 
-    _LOGGER.debug("async_setup_entry called for host %s", host)
-
     try:
-        future_client = CoAPClient.create(host)
-        client = await asyncio.wait_for(future_client, timeout=25)
-        _LOGGER.debug("got a valid client for host %s", host)
-    except Exception as ex:
+        client = await asyncio.wait_for(CoAPClient.create(host), timeout=25)
+    except TimeoutError as ex:
         _LOGGER.warning(r"Failed to connect to host %s: %s", host, ex)
+
         raise ConfigEntryNotReady from ex
 
-    coordinator = Coordinator(client, host, mac)
-    _LOGGER.debug("got a valid coordinator for host %s", host)
+    device_information = DeviceInformation(
+        host=host, mac=mac, model=model, name=name, device_id=device_id
+    )
 
-    data = hass.data.get(DOMAIN)
-    if data is None:
-        hass.data[DOMAIN] = {}
+    coordinator = Coordinator(hass, client, host, status)
 
-    hass.data[DOMAIN][host] = {
-        DATA_KEY_CLIENT: client,
-        DATA_KEY_COORDINATOR: coordinator,
-    }
+    config_entry_data = ConfigEntryData(
+        device_information=device_information,
+        coordinator=coordinator,
+        latest_status=status,
+        client=client,
+    )
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = config_entry_data
 
-    await coordinator.async_first_refresh()
-    _LOGGER.debug("coordinator did first refresh for host %s", host)
-
-    for platform in PLATFORMS:
-        hass.async_create_task(
-            hass.config_entries.async_forward_entry_setup(entry, platform)
-        )
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     return True
 
@@ -165,9 +169,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     for p in PLATFORMS:
         await hass.config_entries.async_forward_entry_unload(entry, p)
 
-    coord: Coordinator = hass.data[DOMAIN][entry.data[CONF_HOST]][DATA_KEY_COORDINATOR]
-    await coord.shutdown()
+    config_entry_data: ConfigEntryData = hass.data[DOMAIN][entry.entry_id]
 
-    hass.data[DOMAIN].pop(entry.data[CONF_HOST])
+    await config_entry_data.coordinator.shutdown()
+
+    hass.data[DOMAIN].pop(entry.entry_id)
 
     return True

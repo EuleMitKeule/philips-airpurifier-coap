@@ -1,21 +1,21 @@
 """Collection of classes to manage Philips AirPurifier devices."""
+
 from __future__ import annotations
 
 import asyncio
-from asyncio.tasks import Task
 from collections.abc import Callable
-import contextlib
 from datetime import timedelta
 import logging
-from typing import Any, Optional, Union
+from typing import Any
 
-from aioairctrl import CoAPClient
+from custom_components.philips_airpurifier_coap.config_entry_data import ConfigEntryData
 
 from homeassistant.components.fan import FanEntity, FanEntityFeature
-from homeassistant.core import CALLBACK_TYPE, callback
-from homeassistant.exceptions import ConfigEntryNotReady, PlatformNotReady
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, DeviceInfo
 from homeassistant.helpers.entity import Entity
+from homeassistant.util import slugify
 from homeassistant.util.percentage import (
     ordered_list_item_to_percentage,
     percentage_to_ordered_list_item,
@@ -24,6 +24,7 @@ from homeassistant.util.percentage import (
 from .const import (
     DOMAIN,
     ICON,
+    MANUFACTURER,
     SWITCH_OFF,
     SWITCH_ON,
     FanAttributes,
@@ -31,255 +32,112 @@ from .const import (
     PhilipsApi,
     PresetMode,
 )
-from .model import DeviceStatus
-from .timer import Timer
 
 _LOGGER = logging.getLogger(__name__)
-
-MISSED_PACKAGE_COUNT = 3
-
-
-class Coordinator:
-    """Class to coordinate the data requests from the Philips API."""
-
-    def __init__(self, client: CoAPClient, host: str, mac: str) -> None:  # noqa: D107
-        self.client = client
-        self._host = host
-        self._mac = mac
-
-        # It's None before the first successful update.
-        # Components should call async_first_refresh to make sure the first
-        # update was successful. Set type to just DeviceStatus to remove
-        # annoying checks that status is not None when it was already checked
-        # during setup.
-        self.status: DeviceStatus = None  # type: ignore[assignment]
-
-        self._listeners: list[CALLBACK_TYPE] = []
-        self._task: Task | None = None
-
-        self._reconnect_task: Task | None = None
-        self._timeout: int = 60
-
-        # Timeout = MAX_AGE * 3 Packet losses
-        _LOGGER.debug("init: Creating and autostarting timer for host %s", self._host)
-        self._timer_disconnected = Timer(
-            timeout=self._timeout * MISSED_PACKAGE_COUNT,
-            callback=self.reconnect,
-            autostart=True,
-        )
-        self._timer_disconnected._auto_restart = True
-        _LOGGER.debug("init: finished for host %s", self._host)
-
-    async def shutdown(self):
-        """Shutdown the API connection."""
-        _LOGGER.debug("shutdown: called for host %s", self._host)
-        if self._reconnect_task is not None:
-            _LOGGER.debug("shutdown: cancelling reconnect task for host %s", self._host)
-            self._reconnect_task.cancel()
-        if self._timer_disconnected is not None:
-            _LOGGER.debug("shutdown: cancelling timeout task for host %s", self._host)
-            self._timer_disconnected.cancel()
-        if self.client is not None:
-            await self.client.shutdown()
-
-    async def reconnect(self):
-        """Reconnect to the API connection."""
-        _LOGGER.debug("reconnect: called for host %s", self._host)
-        try:
-            if self._reconnect_task is not None:
-                # Reconnect stuck
-                _LOGGER.debug(
-                    "reconnect: cancelling reconnect task for host %s", self._host
-                )
-                self._reconnect_task.cancel()
-                self._reconnect_task = None
-            # Reconnect in new Task, keep timer watching
-            _LOGGER.debug(
-                "reconnect: creating new reconnect task for host %s", self._host
-            )
-            self._reconnect_task = asyncio.create_task(self._reconnect())
-        except:  # noqa: E722
-            _LOGGER.exception("Exception on starting reconnect!")
-
-    async def _reconnect(self):
-        try:
-            _LOGGER.debug("Reconnecting")
-            with contextlib.suppress(Exception):
-                await self.client.shutdown()
-            self.client = await CoAPClient.create(self._host)
-            self._start_observing()
-        except asyncio.CancelledError:
-            # Silently drop this exception, because we are responsible for it.
-            # Reconnect took to long
-            pass
-        except:  # noqa: E722
-            _LOGGER.exception("_reconnect error")
-
-    async def async_first_refresh(self) -> None:
-        """Refresh the data for the first time."""
-        _LOGGER.debug("async_first_refresh for host %s", self._host)
-        try:
-            self.status, timeout = await self.client.get_status()
-            self._timeout = timeout
-            if self._timer_disconnected is not None:
-                self._timer_disconnected.setTimeout(timeout * MISSED_PACKAGE_COUNT)
-            _LOGGER.debug("finished first refresh for host %s", self._host)
-        except Exception as ex:
-            _LOGGER.error(
-                "Config not ready, first refresh failed for host %s", self._host
-            )
-            raise ConfigEntryNotReady from ex
-
-    @callback
-    def async_add_listener(self, update_callback: CALLBACK_TYPE) -> Callable[[], None]:
-        """Listen for data updates."""
-        start_observing = not self._listeners
-
-        self._listeners.append(update_callback)
-
-        if start_observing:
-            self._start_observing()
-
-        @callback
-        def remove_listener() -> None:
-            """Remove update listener."""
-            self.async_remove_listener(update_callback)
-
-        return remove_listener
-
-    @callback
-    def async_remove_listener(self, update_callback) -> None:
-        """Remove data update."""
-        self._listeners.remove(update_callback)
-
-        if not self._listeners and self._task:
-            self._task.cancel()
-            self._task = None
-
-    async def _async_observe_status(self) -> None:
-        async for status in self.client.observe_status():
-            _LOGGER.debug("Status update: %s", status)
-            self.status = status
-            self._timer_disconnected.reset()
-            for update_callback in self._listeners:
-                update_callback()
-
-    def _start_observing(self) -> None:
-        """Schedule state observation."""
-        if self._task:
-            self._task.cancel()
-            self._task = None
-        self._task = asyncio.create_task(self._async_observe_status())
-        self._timer_disconnected.reset()
 
 
 class PhilipsEntity(Entity):
     """Class to represent a generic Philips entity."""
 
-    def __init__(self, coordinator: Coordinator) -> None:  # noqa: D107
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        config_entry_data: ConfigEntryData,
+    ) -> None:
+        """Initialize the entity."""
+
         super().__init__()
-        _LOGGER.debug("PhilipsEntity __init__ called")
-        _LOGGER.debug("coordinator.status is: %s", coordinator.status)
-        self.coordinator = coordinator
-        self._serialNumber = coordinator.status[PhilipsApi.DEVICE_ID]
-        # self._name = coordinator.status["name"]
-        self._name = list(
-            filter(
-                None,
-                map(
-                    coordinator.status.get,
-                    [PhilipsApi.NAME, PhilipsApi.NEW_NAME, PhilipsApi.NEW2_NAME],
-                ),
-            )
-        )[0]
-        # self._modelName = coordinator.status["modelid"]
-        self._modelName = list(
-            filter(
-                None,
-                map(
-                    coordinator.status.get,
-                    [
-                        PhilipsApi.MODEL_ID,
-                        PhilipsApi.NEW_MODEL_ID,
-                        PhilipsApi.NEW2_MODEL_ID,
-                    ],
-                ),
-            )
-        )[0]
-        self._firmware = coordinator.status["WifiVersion"]
-        self._manufacturer = "Philips"
-        self._mac = coordinator._mac
+
+        self.hass = hass
+        self.config_entry = entry
+        self.config_entry_data = config_entry_data
+        self.coordinator = self.config_entry_data.coordinator
+
+    async def async_added_to_hass(self) -> None:
+        """Register with hass that routine got added."""
+
+        remove_callback = self.coordinator.async_add_listener(
+            self._handle_coordinator_update
+        )
+
+        self.async_on_remove(remove_callback)
+
+    @property
+    def _device_status(self) -> dict:
+        """Return the device status."""
+
+        return self.coordinator.status
 
     @property
     def should_poll(self) -> bool:
         """No need to poll. Coordinator notifies entity of updates."""
+
         return False
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return info about the device."""
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._serialNumber)},
-            connections={(CONNECTION_NETWORK_MAC, self._mac)}
-            if self._mac is not None
-            else None,
-            name=self._name,
-            model=self._modelName,
-            manufacturer=self._manufacturer,
-            sw_version=self._firmware,
-        )
-
-    @property
-    def available(self):
-        """Return if the device is available."""
-        return self.coordinator.status is not None
-
-    @property
-    def _device_status(self) -> dict[str, Any]:
-        """Return the status of the device."""
-        return self.coordinator.status
-
-    async def async_added_to_hass(self) -> None:
-        """Register with hass that routine got added."""
-        await super().async_added_to_hass()
-        self.async_on_remove(
-            self.coordinator.async_add_listener(self._handle_coordinator_update)
-        )
 
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
+
+        self.config_entry_data.latest_status = self._device_status
+
         self.async_write_ha_state()
 
 
 class PhilipsGenericFan(PhilipsEntity, FanEntity):
     """Class to manage a generic Philips fan."""
 
-    def __init__(  # noqa: D107
+    def __init__(
         self,
-        coordinator: Coordinator,
-        model: str,
-        name: str,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        config_entry_data: ConfigEntryData,
     ) -> None:
-        super().__init__(coordinator)
-        self._model = model
-        self._name = name
-        self._unique_id = None
+        """Initialize the fan."""
 
-    @property
-    def unique_id(self) -> Optional[str]:
-        """Return the unique ID of the fan."""
-        return self._unique_id
+        super().__init__(hass, entry, config_entry_data)
 
-    @property
-    def name(self) -> str:
-        """Return the name of the fan."""
-        return self._name
+        self._attr_name = list(
+            filter(
+                None,
+                map(
+                    self._device_status.get,
+                    [
+                        PhilipsApi.NAME,
+                        PhilipsApi.NEW_NAME,
+                        PhilipsApi.NEW2_NAME,
+                    ],
+                ),
+            )
+        )[0]
+        self._attr_unique_id = (
+            f"{slugify(self.config_entry_data.device_information.device_id)}_fan"
+        )
+        self._attr_device_info = DeviceInfo(
+            name=self._attr_name,
+            manufacturer=MANUFACTURER,
+            model=list(
+                filter(
+                    None,
+                    map(
+                        self._device_status.get,
+                        [
+                            PhilipsApi.MODEL_ID,
+                            PhilipsApi.NEW_MODEL_ID,
+                            PhilipsApi.NEW2_MODEL_ID,
+                        ],
+                    ),
+                )
+            )[0],
+            sw_version=self._device_status["WifiVersion"],
+            serial_number=self._device_status[PhilipsApi.DEVICE_ID],
+            identifiers={(DOMAIN, self._device_status[PhilipsApi.DEVICE_ID])},
+        )
 
-    @property
-    def icon(self) -> str:
-        """Return the icon of the fan."""
-        return self._icon
+        if self.config_entry_data.device_information.mac is not None:
+            self._attr_device_info.connections = {
+                (CONNECTION_NETWORK_MAC, self.config_entry_data.device_information.mac)
+            }
 
 
 class PhilipsGenericCoAPFanBase(PhilipsGenericFan):
@@ -301,13 +159,15 @@ class PhilipsGenericCoAPFanBase(PhilipsGenericFan):
 
     KEY_OSCILLATION = None
 
-    def __init__(  # noqa: D107
+    def __init__(
         self,
-        coordinator: Coordinator,
-        model: str,
-        name: str,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        config_entry_data: ConfigEntryData,
     ) -> None:
-        super().__init__(coordinator, model, name)
+        """Initialize the fan."""
+
+        super().__init__(hass, entry, config_entry_data)
 
         self._preset_modes = []
         self._available_preset_modes = {}
@@ -320,90 +180,108 @@ class PhilipsGenericCoAPFanBase(PhilipsGenericFan):
         self._available_attributes = []
         self._collect_available_attributes()
 
-        try:
-            device_id = self._device_status[PhilipsApi.DEVICE_ID]
-            self._unique_id = f"{self._model}-{device_id}"
-        except Exception as e:
-            _LOGGER.error("Failed retrieving unique_id: %s", e)
-            raise PlatformNotReady
-
     def _collect_available_preset_modes(self):
         preset_modes = {}
+
         for cls in reversed(self.__class__.__mro__):
             cls_preset_modes = getattr(cls, "AVAILABLE_PRESET_MODES", {})
             preset_modes.update(cls_preset_modes)
+
         self._available_preset_modes = preset_modes
         self._preset_modes = list(self._available_preset_modes.keys())
 
     def _collect_available_speeds(self):
         speeds = {}
+
         for cls in reversed(self.__class__.__mro__):
             cls_speeds = getattr(cls, "AVAILABLE_SPEEDS", {})
             speeds.update(cls_speeds)
+
         self._available_speeds = speeds
         self._speeds = list(self._available_speeds.keys())
 
     def _collect_available_attributes(self):
         attributes = []
+
         for cls in reversed(self.__class__.__mro__):
             cls_attributes = getattr(cls, "AVAILABLE_ATTRIBUTES", [])
             attributes.extend(cls_attributes)
+
         self._available_attributes = attributes
 
     @property
-    def is_on(self) -> bool:
+    def is_on(self) -> bool | None:
         """Return if the fan is on."""
-        status = self._device_status.get(self.KEY_PHILIPS_POWER)
-        # _LOGGER.debug("is_on: status=%s - test=%s", status, self.STATE_POWER_ON)
-        return status == self.STATE_POWER_ON
+
+        power_status = self._device_status.get(self.KEY_PHILIPS_POWER)
+        is_on = power_status == self.STATE_POWER_ON
+
+        return is_on
 
     async def async_turn_on(
         self,
-        percentage: Optional[int] = None,
-        preset_mode: Optional[str] = None,
+        percentage: int | None = None,
+        preset_mode: str | None = None,
         **kwargs,
     ):
         """Turn the fan on."""
+
         if preset_mode:
             await self.async_set_preset_mode(preset_mode)
             return
+
         if percentage:
             await self.async_set_percentage(percentage)
             return
+
         await self.coordinator.client.set_control_value(
             self.KEY_PHILIPS_POWER, self.STATE_POWER_ON
         )
 
+        self._device_status[self.KEY_PHILIPS_POWER] = self.STATE_POWER_ON
+        self._handle_coordinator_update()
+
     async def async_turn_off(self, **kwargs) -> None:
         """Turn the fan off."""
+
         await self.coordinator.client.set_control_value(
             self.KEY_PHILIPS_POWER, self.STATE_POWER_OFF
         )
 
+        self._device_status[self.KEY_PHILIPS_POWER] = self.STATE_POWER_OFF
+        self._handle_coordinator_update()
+
     @property
     def supported_features(self) -> int:
         """Return the supported features."""
+
         features = FanEntityFeature.PRESET_MODE
+
         if self._speeds:
             features |= FanEntityFeature.SET_SPEED
+
         if self.KEY_OSCILLATION is not None:
             features |= FanEntityFeature.OSCILLATE
+
         return features
 
     @property
-    def preset_modes(self) -> Optional[list[str]]:
+    def preset_modes(self) -> list[str] | None:
         """Return the supported preset modes."""
+
         return self._preset_modes
 
     @property
-    def preset_mode(self) -> Optional[str]:
+    def preset_mode(self) -> str | None:
         """Return the selected preset mode."""
+
         for preset_mode, status_pattern in self._available_preset_modes.items():
             for k, v in status_pattern.items():
-                # check if the speed sensor also used for presets is different from the setting field
                 if self.REPLACE_PRESET is not None and k == self.REPLACE_PRESET[0]:
                     k = self.REPLACE_PRESET[1]
+
                 status = self._device_status.get(k)
+
                 if status != v:
                     break
             else:
@@ -411,28 +289,43 @@ class PhilipsGenericCoAPFanBase(PhilipsGenericFan):
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Set the preset mode of the fan."""
+
         status_pattern = self._available_preset_modes.get(preset_mode)
+
         if status_pattern:
             await self.coordinator.client.set_control_values(data=status_pattern)
+            self._device_status.update(status_pattern)
+            self._handle_coordinator_update()
 
     @property
     def speed_count(self) -> int:
         """Return the number of speed options."""
+
         return len(self._speeds)
 
     @property
     def oscillating(self) -> bool | None:
         """Return if the fan is oscillating."""
+
         if self.KEY_OSCILLATION is None:
             return None
 
         key = next(iter(self.KEY_OSCILLATION))
         status = self._device_status.get(key)
         on = self.KEY_OSCILLATION.get(key).get(SWITCH_ON)
-        return status is not None and status == on
+
+        if status is None:
+            return None
+
+        if isinstance(on, int):
+            return status == on
+
+        if isinstance(on, list):
+            return status in on
 
     async def async_oscillate(self, oscillating: bool) -> None:
         """Osciallate the fan."""
+
         if self.KEY_OSCILLATION is None:
             return None
 
@@ -440,19 +333,26 @@ class PhilipsGenericCoAPFanBase(PhilipsGenericFan):
         values = self.KEY_OSCILLATION.get(key)
         on = values.get(SWITCH_ON)
         off = values.get(SWITCH_OFF)
+
+        on_value = on if isinstance(on, int) else on[0]
+
         if oscillating:
-            await self.coordinator.client.set_control_value(key, on)
+            await self.coordinator.client.set_control_value(key, on_value)
         else:
             await self.coordinator.client.set_control_value(key, off)
 
+        self._device_status[key] = on_value if oscillating else off
+        self._handle_coordinator_update()
+
     @property
-    def percentage(self) -> Optional[int]:
+    def percentage(self) -> int | None:
         """Return the speed percentages."""
+
         for speed, status_pattern in self._available_speeds.items():
             for k, v in status_pattern.items():
-                # check if the speed sensor is different from the speed setting field
                 if self.REPLACE_SPEED is not None and k == self.REPLACE_SPEED[0]:
                     k = self.REPLACE_SPEED[1]
+
                 if self._device_status.get(k) != v:
                     break
             else:
@@ -462,25 +362,27 @@ class PhilipsGenericCoAPFanBase(PhilipsGenericFan):
 
     async def async_set_percentage(self, percentage: int) -> None:
         """Return the selected speed percentage."""
+
         if percentage == 0:
             await self.async_turn_off()
         else:
             speed = percentage_to_ordered_list_item(self._speeds, percentage)
             status_pattern = self._available_speeds.get(speed)
+
             if status_pattern:
                 await self.coordinator.client.set_control_values(data=status_pattern)
+                self._handle_coordinator_update()
 
     @property
-    def extra_state_attributes(self) -> Optional[dict[str, Any]]:
+    def extra_state_attributes(self) -> dict[str, Any] | None:
         """Return the extra state attributes."""
 
         def append(
             attributes: dict,
             key: str,
             philips_key: str,
-            value_map: Union[dict, Callable[[Any, Any], Any]] = None,
+            value_map: dict | Callable[[Any, Any], Any] = None,
         ):
-            # some philips keys are not unique, so # serves as a marker and needs to be filtered out
             philips_clean_key = philips_key.partition("#")[0]
 
             if philips_clean_key in self._device_status:
@@ -502,6 +404,7 @@ class PhilipsGenericCoAPFanBase(PhilipsGenericFan):
     @property
     def icon(self) -> str:
         """Return the icon of the fan."""
+
         if not self.is_on:
             return ICON.POWER_BUTTON
 
@@ -521,7 +424,6 @@ class PhilipsGenericCoAPFan(PhilipsGenericCoAPFanBase):
     AVAILABLE_SPEEDS = {}
 
     AVAILABLE_ATTRIBUTES = [
-        # device information
         (FanAttributes.NAME, PhilipsApi.NAME),
         (FanAttributes.TYPE, PhilipsApi.TYPE),
         (FanAttributes.MODEL_ID, PhilipsApi.MODEL_ID),
@@ -531,15 +433,12 @@ class PhilipsGenericCoAPFan(PhilipsGenericCoAPFanBase):
         (FanAttributes.SOFTWARE_VERSION, PhilipsApi.SOFTWARE_VERSION),
         (FanAttributes.WIFI_VERSION, PhilipsApi.WIFI_VERSION),
         (FanAttributes.ERROR_CODE, PhilipsApi.ERROR_CODE),
-        # (FanAttributes.ERROR, PhilipsApi.ERROR_CODE, PhilipsApi.ERROR_CODE_MAP),
-        # device configuration
         (FanAttributes.LANGUAGE, PhilipsApi.LANGUAGE),
         (
             FanAttributes.PREFERRED_INDEX,
             PhilipsApi.PREFERRED_INDEX,
             PhilipsApi.PREFERRED_INDEX_MAP,
         ),
-        # device sensors
         (
             FanAttributes.RUNTIME,
             PhilipsApi.RUNTIME,
@@ -560,23 +459,18 @@ class PhilipsNewGenericCoAPFan(PhilipsGenericCoAPFanBase):
     AVAILABLE_SPEEDS = {}
 
     AVAILABLE_ATTRIBUTES = [
-        # device information
         (FanAttributes.NAME, PhilipsApi.NEW_NAME),
         (FanAttributes.MODEL_ID, PhilipsApi.NEW_MODEL_ID),
         (FanAttributes.PRODUCT_ID, PhilipsApi.PRODUCT_ID),
         (FanAttributes.DEVICE_ID, PhilipsApi.DEVICE_ID),
         (FanAttributes.SOFTWARE_VERSION, PhilipsApi.NEW_SOFTWARE_VERSION),
         (FanAttributes.WIFI_VERSION, PhilipsApi.WIFI_VERSION),
-        # (FanAttributes.ERROR_CODE, PhilipsApi.ERROR_CODE),
-        # (FanAttributes.ERROR, PhilipsApi.ERROR_CODE, PhilipsApi.ERROR_CODE_MAP),
-        # device configuration
         (FanAttributes.LANGUAGE, PhilipsApi.NEW_LANGUAGE),
         (
             FanAttributes.PREFERRED_INDEX,
             PhilipsApi.NEW_PREFERRED_INDEX,
             PhilipsApi.NEW_PREFERRED_INDEX_MAP,
         ),
-        # device sensors
         (
             FanAttributes.RUNTIME,
             PhilipsApi.RUNTIME,
@@ -600,7 +494,6 @@ class PhilipsNew2GenericCoAPFan(PhilipsGenericCoAPFanBase):
     AVAILABLE_SPEEDS = {}
 
     AVAILABLE_ATTRIBUTES = [
-        # device information
         (FanAttributes.NAME, PhilipsApi.NEW2_NAME),
         (FanAttributes.MODEL_ID, PhilipsApi.NEW2_MODEL_ID),
         (FanAttributes.PRODUCT_ID, PhilipsApi.PRODUCT_ID),
@@ -608,14 +501,11 @@ class PhilipsNew2GenericCoAPFan(PhilipsGenericCoAPFanBase):
         (FanAttributes.SOFTWARE_VERSION, PhilipsApi.NEW2_SOFTWARE_VERSION),
         (FanAttributes.WIFI_VERSION, PhilipsApi.WIFI_VERSION),
         (FanAttributes.ERROR_CODE, PhilipsApi.NEW2_ERROR_CODE),
-        # (FanAttributes.ERROR, PhilipsApi.ERROR_CODE, PhilipsApi.ERROR_CODE_MAP),
-        # device configuration
         (
             FanAttributes.PREFERRED_INDEX,
             PhilipsApi.NEW2_GAS_PREFERRED_INDEX,
             PhilipsApi.GAS_PREFERRED_INDEX_MAP,
         ),
-        # device sensors
         (
             FanAttributes.RUNTIME,
             PhilipsApi.RUNTIME,
@@ -639,8 +529,6 @@ class PhilipsHumidifierMixin(PhilipsGenericCoAPFanBase):
     AVAILABLE_BINARY_SENSORS = [PhilipsApi.ERROR_CODE]
 
 
-# similar to the AC1715, the AC0850 seems to be a new class of devices that
-# follows some patterns of its own
 class PhilipsAC0850(PhilipsNewGenericCoAPFan):
     """AC0850."""
 
@@ -656,11 +544,9 @@ class PhilipsAC0850(PhilipsNewGenericCoAPFan):
         PresetMode.SLEEP: {PhilipsApi.NEW_POWER: "ON", PhilipsApi.NEW_MODE: "Sleep"},
         PresetMode.TURBO: {PhilipsApi.NEW_POWER: "ON", PhilipsApi.NEW_MODE: "Turbo"},
     }
-    # the prefilter data is present but doesn't change for this device, so let's take it out
     UNAVAILABLE_FILTERS = [PhilipsApi.FILTER_NANOPROTECT_PREFILTER]
 
 
-# the AC1715 seems to be a new class of devices that follows some patterns of its own
 class PhilipsAC1715(PhilipsNewGenericCoAPFan):
     """AC1715."""
 
@@ -698,12 +584,9 @@ class PhilipsAC1715(PhilipsNewGenericCoAPFan):
 class PhilipsAC1214(PhilipsGenericCoAPFan):
     """AC1214."""
 
-    # the AC1214 doesn't seem to like a power on call when the mode or speed is set,
-    # so this needs to be handled separately
     AVAILABLE_PRESET_MODES = {
         PresetMode.AUTO: {PhilipsApi.MODE: "P"},
         PresetMode.ALLERGEN: {PhilipsApi.MODE: "A"},
-        # make speeds available as preset
         PresetMode.NIGHT: {PhilipsApi.MODE: "N"},
         PresetMode.SPEED_1: {PhilipsApi.MODE: "M", PhilipsApi.SPEED: "1"},
         PresetMode.SPEED_2: {PhilipsApi.MODE: "M", PhilipsApi.SPEED: "2"},
@@ -722,27 +605,31 @@ class PhilipsAC1214(PhilipsGenericCoAPFan):
 
     async def async_set_a(self) -> None:
         """Set the preset mode to Allergen."""
+
         _LOGGER.debug("AC1214 switches to mode 'A' first")
+
         a_status_pattern = self._available_preset_modes.get(PresetMode.ALLERGEN)
+
         await self.coordinator.client.set_control_values(data=a_status_pattern)
         await asyncio.sleep(1)
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Set the preset mode of the fan."""
+
         _LOGGER.debug("AC1214 async_set_preset_mode is called with: %s", preset_mode)
 
-        # the AC1214 doesn't like it if we set a preset mode to switch on the device,
-        # so it needs to be done in sequence
         if not self.is_on:
             _LOGGER.debug("AC1214 is switched on without setting a mode")
+
             await self.coordinator.client.set_control_value(
                 PhilipsApi.POWER, PhilipsApi.POWER_MAP[SWITCH_ON]
             )
             await asyncio.sleep(1)
 
-        # the AC1214 also doesn't seem to like switching to mode 'M' without cycling through mode 'A'
         current_pattern = self._available_preset_modes.get(self.preset_mode)
+
         _LOGGER.debug("AC1214 is currently on mode: %s", current_pattern)
+
         if preset_mode:
             _LOGGER.debug("AC1214 preset mode requested: %s", preset_mode)
             status_pattern = self._available_preset_modes.get(preset_mode)
@@ -793,8 +680,8 @@ class PhilipsAC1214(PhilipsGenericCoAPFan):
 
     async def async_turn_on(
         self,
-        percentage: Optional[int] = None,
-        preset_mode: Optional[str] = None,
+        percentage: int | None = None,
+        preset_mode: str | None = None,
         **kwargs,
     ):
         """Turn on the device."""
@@ -1789,32 +1676,20 @@ class PhilipsCX3550(PhilipsNew2GenericCoAPFan):
     """CX3550."""
 
     AVAILABLE_PRESET_MODES = {
-        PresetMode.SPEED_1: {
+        PresetMode.NONE: {
             PhilipsApi.NEW2_POWER: 1,
             PhilipsApi.NEW2_MODE_A: 1,
             PhilipsApi.NEW2_MODE_B: 1,
             PhilipsApi.NEW2_MODE_C: 1,
         },
-        PresetMode.SPEED_2: {
-            PhilipsApi.POWER: 1,
-            PhilipsApi.NEW2_MODE_A: 1,
-            PhilipsApi.NEW2_MODE_B: 2,
-            PhilipsApi.NEW2_MODE_C: 2,
-        },
-        PresetMode.SPEED_3: {
-            PhilipsApi.POWER: 1,
-            PhilipsApi.NEW2_MODE_A: 1,
-            PhilipsApi.NEW2_MODE_B: 3,
-            PhilipsApi.NEW2_MODE_C: 3,
-        },
         PresetMode.NATURAL: {
-            PhilipsApi.POWER: 1,
+            PhilipsApi.NEW2_POWER: 1,
             PhilipsApi.NEW2_MODE_A: 1,
             PhilipsApi.NEW2_MODE_B: -126,
             PhilipsApi.NEW2_MODE_C: 1,
         },
         PresetMode.SLEEP: {
-            PhilipsApi.POWER: 1,
+            PhilipsApi.NEW2_POWER: 1,
             PhilipsApi.NEW2_MODE_A: 1,
             PhilipsApi.NEW2_MODE_B: 17,
             PhilipsApi.NEW2_MODE_C: 2,
@@ -1828,13 +1703,13 @@ class PhilipsCX3550(PhilipsNew2GenericCoAPFan):
             PhilipsApi.NEW2_MODE_C: 1,
         },
         PresetMode.SPEED_2: {
-            PhilipsApi.POWER: 1,
+            PhilipsApi.NEW2_POWER: 1,
             PhilipsApi.NEW2_MODE_A: 1,
             PhilipsApi.NEW2_MODE_B: 2,
             PhilipsApi.NEW2_MODE_C: 2,
         },
         PresetMode.SPEED_3: {
-            PhilipsApi.POWER: 1,
+            PhilipsApi.NEW2_POWER: 1,
             PhilipsApi.NEW2_MODE_A: 1,
             PhilipsApi.NEW2_MODE_B: 3,
             PhilipsApi.NEW2_MODE_C: 3,
@@ -1846,28 +1721,6 @@ class PhilipsCX3550(PhilipsNew2GenericCoAPFan):
 
     AVAILABLE_SWITCHES = [PhilipsApi.NEW2_BEEP]
     AVAILABLE_SELECTS = [PhilipsApi.NEW2_TIMER2]
-
-    @property
-    def oscillating(self) -> bool | None:
-        """Return if the fan is oscillating."""
-
-        key = next(iter(self.KEY_OSCILLATION))
-        status = self._device_status.get(key)
-        on = self.KEY_OSCILLATION.get(key).get(SWITCH_ON)
-        return status is not None and status in [on, PhilipsApi.OSCILLATION_CX355001]
-
-    async def async_oscillate(self, oscillating: bool) -> None:
-        """Osciallate the fan."""
-
-        await super().async_oscillate(oscillating)
-
-        self._device_status[PhilipsApi.NEW2_OSCILLATION] = (
-            PhilipsApi.OSCILLATION_MAP2.get(SWITCH_ON)
-            if oscillating
-            else PhilipsApi.OSCILLATION_MAP2.get(SWITCH_OFF)
-        )
-
-        self.async_write_ha_state()
 
 
 model_to_class = {

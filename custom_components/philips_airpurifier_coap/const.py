@@ -1,4 +1,5 @@
 """Constants for Philips AirPurifier integration."""
+
 from __future__ import annotations
 
 from enum import StrEnum
@@ -31,12 +32,15 @@ from .model import (
 )
 
 DOMAIN = "philips_airpurifier_coap"
+MANUFACTURER = "Philips"
 
 DATA_KEY_CLIENT = "client"
 DATA_KEY_COORDINATOR = "coordinator"
 DATA_KEY_FAN = "fan"
 
 DEFAULT_NAME = "Philips AirPurifier"
+
+MISSED_PACKAGE_COUNT = 3
 
 
 class ICON(StrEnum):
@@ -87,6 +91,7 @@ ICONS = "icons"
 
 CONF_MODEL = "model"
 CONF_DEVICE_ID = "device_id"
+CONF_STATUS = "status"
 
 SWITCH_ON = "on"
 SWITCH_OFF = "off"
@@ -133,6 +138,7 @@ class FanModel(StrEnum):
 class PresetMode:
     """Available preset modes."""
 
+    NONE = "none"
     SPEED_1 = "speed 1"
     SPEED_GENTLE_1 = "gentle/speed 1"
     SPEED_2 = "speed 2"
@@ -344,10 +350,9 @@ class PhilipsApi:
         SWITCH_OFF: "0",
     }
     OSCILLATION_MAP2 = {
-        SWITCH_ON: 17242,
+        SWITCH_ON: [17242, 23040],
         SWITCH_OFF: 0,
     }
-    OSCILLATION_CX355001 = 23040
 
     # the AC1715 seems to follow a new scheme, this should later be refactored
     NEW_NAME = "D01-03"
@@ -605,6 +610,8 @@ SENSOR_TYPES: dict[str, SensorDescription] = {
     #     CONF_ENTITY_CATEGORY: EntityCategory.DIAGNOSTIC,
     # },
 }
+
+EXTRA_SENSOR_TYPES: dict[str, SensorDescription] = {}
 
 BINARY_SENSOR_TYPES: dict[str, SensorDescription] = {
     # binary device sensors

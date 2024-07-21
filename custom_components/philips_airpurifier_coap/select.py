@@ -1,4 +1,5 @@
 """Philips Air Purifier & Humidifier Selects."""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -7,26 +8,14 @@ from typing import Any
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import (
-    ATTR_DEVICE_CLASS,
-    CONF_ENTITY_CATEGORY,
-    CONF_HOST,
-    CONF_NAME,
-)
+from homeassistant.const import ATTR_DEVICE_CLASS, CONF_ENTITY_CATEGORY
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import PlatformNotReady
 from homeassistant.helpers.entity import Entity
 
-from .const import (
-    CONF_MODEL,
-    DATA_KEY_COORDINATOR,
-    DOMAIN,
-    OPTIONS,
-    SELECT_TYPES,
-    FanAttributes,
-    PhilipsApi,
-)
-from .philips import Coordinator, PhilipsEntity, model_to_class
+from .const import OPTIONS, SELECT_TYPES, FanAttributes, PhilipsApi
+from .coordinator import Coordinator
+from .philips import PhilipsEntity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,33 +28,33 @@ async def async_setup_entry(
     """Set up the select platform."""
     _LOGGER.debug("async_setup_entry called for platform select")
 
-    host = entry.data[CONF_HOST]
-    model = entry.data[CONF_MODEL]
-    name = entry.data[CONF_NAME]
+    # host = entry.data[CONF_HOST]
+    # model = entry.data[CONF_MODEL]
+    # name = entry.data[CONF_NAME]
 
-    data = hass.data[DOMAIN][host]
+    # data = hass.data[DOMAIN][host]
 
-    coordinator = data[DATA_KEY_COORDINATOR]
+    # coordinator = data[DATA_KEY_COORDINATOR]
 
-    model_class = model_to_class.get(model)
-    if model_class:
-        available_selects = []
+    # model_class = model_to_class.get(model)
+    # if model_class:
+    #     available_selects = []
 
-        for cls in reversed(model_class.__mro__):
-            cls_available_selects = getattr(cls, "AVAILABLE_SELECTS", [])
-            available_selects.extend(cls_available_selects)
+    #     for cls in reversed(model_class.__mro__):
+    #         cls_available_selects = getattr(cls, "AVAILABLE_SELECTS", [])
+    #         available_selects.extend(cls_available_selects)
 
-        selects = []
+    #     selects = []
 
-        for select in SELECT_TYPES:
-            if select in available_selects:
-                selects.append(PhilipsSelect(coordinator, name, model, select))
+    #     for select in SELECT_TYPES:
+    #         if select in available_selects:
+    #             selects.append(PhilipsSelect(coordinator, name, model, select))
 
-        async_add_entities(selects, update_before_add=False)
+    #     async_add_entities(selects, update_before_add=False)
 
-    else:
-        _LOGGER.error("Unsupported model: %s", model)
-        return
+    # else:
+    #     _LOGGER.error("Unsupported model: %s", model)
+    #     return
 
 
 class PhilipsSelect(PhilipsEntity, SelectEntity):

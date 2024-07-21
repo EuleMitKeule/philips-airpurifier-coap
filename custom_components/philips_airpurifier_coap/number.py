@@ -1,4 +1,5 @@
 """Philips Air Purifier & Humidifier Numbers."""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -7,26 +8,14 @@ from typing import Any
 
 from homeassistant.components.number import NumberEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import (
-    ATTR_DEVICE_CLASS,
-    ATTR_ICON,
-    CONF_ENTITY_CATEGORY,
-    CONF_HOST,
-    CONF_NAME,
-)
+from homeassistant.const import ATTR_DEVICE_CLASS, ATTR_ICON, CONF_ENTITY_CATEGORY
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import PlatformNotReady
 from homeassistant.helpers.entity import Entity
 
-from .const import (
-    CONF_MODEL,
-    DATA_KEY_COORDINATOR,
-    DOMAIN,
-    NUMBER_TYPES,
-    FanAttributes,
-    PhilipsApi,
-)
-from .philips import Coordinator, PhilipsEntity, model_to_class
+from .const import NUMBER_TYPES, FanAttributes, PhilipsApi
+from .coordinator import Coordinator
+from .philips import PhilipsEntity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,33 +28,33 @@ async def async_setup_entry(
     """Set up the number platform."""
     _LOGGER.debug("async_setup_entry called for platform number")
 
-    host = entry.data[CONF_HOST]
-    model = entry.data[CONF_MODEL]
-    name = entry.data[CONF_NAME]
+    # host = entry.data[CONF_HOST]
+    # model = entry.data[CONF_MODEL]
+    # name = entry.data[CONF_NAME]
 
-    data = hass.data[DOMAIN][host]
+    # data = hass.data[DOMAIN][host]
 
-    coordinator = data[DATA_KEY_COORDINATOR]
+    # coordinator = data[DATA_KEY_COORDINATOR]
 
-    model_class = model_to_class.get(model)
-    if model_class:
-        available_numbers = []
+    # model_class = model_to_class.get(model)
+    # if model_class:
+    #     available_numbers = []
 
-        for cls in reversed(model_class.__mro__):
-            cls_available_numbers = getattr(cls, "AVAILABLE_NUMBERS", [])
-            available_numbers.extend(cls_available_numbers)
+    #     for cls in reversed(model_class.__mro__):
+    #         cls_available_numbers = getattr(cls, "AVAILABLE_NUMBERS", [])
+    #         available_numbers.extend(cls_available_numbers)
 
-        numbers = []
+    #     numbers = []
 
-        for number in NUMBER_TYPES:
-            if number in available_numbers:
-                numbers.append(PhilipsNumber(coordinator, name, model, number))
+    #     for number in NUMBER_TYPES:
+    #         if number in available_numbers:
+    #             numbers.append(PhilipsNumber(coordinator, name, model, number))
 
-        async_add_entities(numbers, update_before_add=False)
+    #     async_add_entities(numbers, update_before_add=False)
 
-    else:
-        _LOGGER.error("Unsupported model: %s", model)
-        return
+    # else:
+    #     _LOGGER.error("Unsupported model: %s", model)
+    #     return
 
 
 class PhilipsNumber(PhilipsEntity, NumberEntity):

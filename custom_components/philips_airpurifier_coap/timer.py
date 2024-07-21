@@ -1,4 +1,5 @@
 """Timer class to handle instable Philips CoaP API."""
+
 import asyncio
 import contextlib
 import logging
@@ -14,7 +15,7 @@ class Timer:
     """Class to represent a timer when communicating async with the API."""
 
     _in_callback: bool = False
-    _auto_restart: bool = False
+    auto_restart: bool = False
 
     def __init__(self, timeout, callback, autostart=True) -> None:  # noqa: D107
         self._timeout = timeout
@@ -44,13 +45,13 @@ class Timer:
                 except RuntimeError:
                     # Yes seems like hass is going down, stepping out
                     _LOGGER.warning("RuntimeError! Stopping Timer")
-                    self._auto_restart = False
+                    self.auto_restart = False
                     self._task = None
                     return
             except:  # noqa: E722
                 _LOGGER.exception("Timer callback failure")
             self._in_callback = False
-            if not self._auto_restart:
+            if not self.auto_restart:
                 break
 
     def setTimeout(self, timeout):

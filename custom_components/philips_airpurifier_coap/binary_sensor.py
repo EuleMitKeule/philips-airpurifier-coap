@@ -1,4 +1,5 @@
 """Philips Air Purifier & Humidifier Binary Sensors."""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -7,25 +8,14 @@ from typing import Any, cast
 
 from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import (
-    ATTR_DEVICE_CLASS,
-    CONF_ENTITY_CATEGORY,
-    CONF_HOST,
-    CONF_NAME,
-)
+from homeassistant.const import ATTR_DEVICE_CLASS, CONF_ENTITY_CATEGORY
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import PlatformNotReady
 from homeassistant.helpers.entity import Entity
 
-from .const import (
-    BINARY_SENSOR_TYPES,
-    CONF_MODEL,
-    DATA_KEY_COORDINATOR,
-    DOMAIN,
-    FanAttributes,
-    PhilipsApi,
-)
-from .philips import Coordinator, PhilipsEntity, model_to_class
+from .const import BINARY_SENSOR_TYPES, FanAttributes, PhilipsApi
+from .coordinator import Coordinator
+from .philips import PhilipsEntity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,32 +27,32 @@ async def async_setup_entry(  # noqa: D103
 ) -> None:
     _LOGGER.debug("async_setup_entry called for platform binary_sensor")
 
-    host = entry.data[CONF_HOST]
-    model = entry.data[CONF_MODEL]
-    name = entry.data[CONF_NAME]
+    # host = entry.data[CONF_HOST]
+    # model = entry.data[CONF_MODEL]
+    # name = entry.data[CONF_NAME]
 
-    data = hass.data[DOMAIN][host]
+    # data = hass.data[DOMAIN][host]
 
-    coordinator = data[DATA_KEY_COORDINATOR]
-    status = coordinator.status
+    # coordinator = data[DATA_KEY_COORDINATOR]
+    # status = coordinator.status
 
-    model_class = model_to_class.get(model)
-    available_binary_sensors = []
+    # model_class = model_to_class.get(model)
+    # available_binary_sensors = []
 
-    if model_class:
-        for cls in reversed(model_class.__mro__):
-            cls_available_binary_sensors = getattr(cls, "AVAILABLE_BINARY_SENSORS", [])
-            available_binary_sensors.extend(cls_available_binary_sensors)
+    # if model_class:
+    #     for cls in reversed(model_class.__mro__):
+    #         cls_available_binary_sensors = getattr(cls, "AVAILABLE_BINARY_SENSORS", [])
+    #         available_binary_sensors.extend(cls_available_binary_sensors)
 
-    binary_sensors = []
+    # binary_sensors = []
 
-    for binary_sensor in BINARY_SENSOR_TYPES:
-        if binary_sensor in status and binary_sensor in available_binary_sensors:
-            binary_sensors.append(
-                PhilipsBinarySensor(coordinator, name, model, binary_sensor)
-            )
+    # for binary_sensor in BINARY_SENSOR_TYPES:
+    #     if binary_sensor in status and binary_sensor in available_binary_sensors:
+    #         binary_sensors.append(
+    #             PhilipsBinarySensor(coordinator, name, model, binary_sensor)
+    #         )
 
-    async_add_entities(binary_sensors, update_before_add=False)
+    # async_add_entities(binary_sensors, update_before_add=False)
 
 
 class PhilipsBinarySensor(PhilipsEntity, BinarySensorEntity):
