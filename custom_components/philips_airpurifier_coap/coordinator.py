@@ -1,12 +1,11 @@
 import asyncio
-from asyncio import Task
-from collections.abc import Callable
 import contextlib
 import logging
+from asyncio import Task
+from collections.abc import Callable
 from typing import Any
 
 from aioairctrl import CoAPClient
-
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 
 from .const import MISSED_PACKAGE_COUNT
@@ -41,7 +40,7 @@ class Coordinator:
         self._timer_disconnected = Timer(
             timeout=self._timeout * MISSED_PACKAGE_COUNT,
             callback=self.reconnect,
-            autostart=True,
+            autostart=False,
         )
         self._timer_disconnected.auto_restart = True
 
@@ -138,7 +137,7 @@ class Coordinator:
             _LOGGER.debug("Status update: %s", status)
 
             self.status = status
-            self._timer_disconnected.reset()
+            # self._timer_disconnected.reset()
 
             for update_callback in self._listeners:
                 update_callback()
@@ -151,4 +150,4 @@ class Coordinator:
             self._task = None
 
         self._task = self.hass.async_create_task(self._async_observe_status())
-        self._timer_disconnected.reset()
+        # self._timer_disconnected.reset()
